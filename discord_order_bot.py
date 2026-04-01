@@ -1,6 +1,5 @@
 import discord
 from discord.ext import commands
-from discord import app_commands
 from flask import Flask, request
 import threading
 import json
@@ -8,6 +7,7 @@ from typing import Optional
 import os
 from dotenv import load_dotenv
 from pathlib import Path
+import asyncio
 
 # Load config dari .env
 load_dotenv()
@@ -64,6 +64,8 @@ def save_orders(orders_list):
         json.dump(orders_list, f, indent=2)
 
 
+# ==================== Bot Events ====================
+
 @bot.event
 async def on_ready():
     print(f"✅ Bot logged in as {bot.user}")
@@ -74,93 +76,28 @@ async def on_ready():
         print(f"❌ Sync error: {e}")
 
 
-# ==================== Commands ====================
+# ==================== Load Cogs ====================
 
-@bot.tree.command(name="addproduct", description="Add new product")
-@app_commands.describe(
-    name="Product name",
-    price="Product price",
-    stock="Initial stock quantity"
-)
-async def add_product(interaction: discord.Interaction, name: str, price: int, stock: int):
-    """Tambah produk baru"""
-    try:
-        products = load_products()
-        
-        # Check duplicate
-        if name.lower() in [p.lower() for p in products.keys()]:
-            await interaction.response.send_message(f"❌ Product '{name}' sudah ada!", ephemeral=True)
-            return
-        
-        # Add product
-        product_id = name.lower().replace(" ", "_")
-        products[product_id] = {
-            "name": name,
-            "price": price,
-            "stock": stock,
-            "created_at": str(discord.utils.utcnow())
-        }
-        
-        save_products(products)
-        
-        await interaction.response.send_message(
-            f"✅ Product added!\n"
-            f"**Name:** {name}\n"
-            f"**Price:** Rp {price:,}\n"
-            f"**Stock:** {stock} units",
-            ephemeral=True
-        )
-        print(f"✅ Product added: {name}")
+async def load_cogs():
+    """Load all cogs from cogs folder"""
+    cogs_path = Path("cogs")
+    if not cogs_path.exists():
+        cogs_path.mkdir()
     
-    except Exception as e:
-        await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
+    for cog_file in cogs_path.glob("*.py"):
+        if cog_file.name.startswith("_"):
+            continue
+        
+        cog_name = cog_file.name[:-3]  # Remove .py
+        try:
+            await bot.load_extension(f"cogs.{cog_name}")
+            print(f"✅ Loaded cog: {cog_name}")
+        except Exception as e:
+            print(f"❌ Failed to load cog {cog_name}: {e}")
 
 
-@bot.tree.command(name="addstock", description="Add stock to existing product")
-@app_commands.describe(
-    product="Product name",
-    quantity="Quantity to add"
-)
-async def add_stock(interaction: discord.Interaction, product: str, quantity: int):
-    """Tambah stok produk"""
-    try:
-        products = load_products()
-        
-        # Find product (case-insensitive)
-        product_key = None
-        for key in products.keys():
-            if products[key]["name"].lower() == product.lower():
-                product_key = key
-                break
-        
-        if not product_key:
-            await interaction.response.send_message(f"❌ Product '{product}' not found!", ephemeral=True)
-            return
-        
-        # Add stock
-        old_stock = products[product_key]["stock"]
-        products[product_key]["stock"] += quantity
-        new_stock = products[product_key]["stock"]
-        
-        save_products(products)
-        
-        await interaction.response.send_message(
-            f"✅ Stock updated!\n"
-            f"**Product:** {products[product_key]['name']}\n"
-            f"**Old Stock:** {old_stock}\n"
-            f"**Added:** +{quantity}\n"
-            f"**New Stock:** {new_stock}",
-            ephemeral=True
-        )
-        print(f"✅ Stock updated: {products[product_key]['name']} (+{quantity})")
-    
-    except ValueError:
-        await interaction.response.send_message("❌ Quantity harus angka!", ephemeral=True)
-    except Exception as e:
-        await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
+# ==================== Webhook ====================
 
-
-# Webhook endpoint (Flask)
 @app.route("/webhook/livestock", methods=["POST"])
 def livestock_webhook():
     """
@@ -172,7 +109,7 @@ def livestock_webhook():
         "qty": 10,
         "weight": "1kg",
         "id": "livestock_123",
-        "channel_id": 1234567890  # Target Discord channel
+        "channel_id": 1234567890
     }
     """
     try:
@@ -188,7 +125,6 @@ def livestock_webhook():
         orders[order_id] = data
         
         # Trigger send ke Discord (async)
-        import asyncio
         asyncio.run_coroutine_threadsafe(
             send_order_to_channel(data, order_id),
             bot.loop
@@ -216,7 +152,6 @@ async def send_order_to_channel(data: dict, order_id: str):
     
     except Exception as e:
         print(f"❌ Send error: {e}")
-
 
 
 async def send_order_embed(channel, data, order_id):
@@ -317,7 +252,8 @@ class OrderModal(discord.ui.Modal, title="Order Details"):
             await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
 
 
-# Run bot in background thread
+# ==================== Run ====================
+
 def run_bot():
     bot.run(DISCORD_TOKEN)
 
@@ -330,6 +266,11 @@ if __name__ == "__main__":
     if not DISCORD_TOKEN:
         print("❌ DISCORD_TOKEN not found in .env")
         exit(1)
+    
+    # Load cogs sebelum run bot
+    @bot.event
+    async def setup_hook():
+        await load_cogs()
     
     # Start bot thread
     bot_thread = threading.Thread(target=run_bot, daemon=True)
