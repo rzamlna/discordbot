@@ -44,41 +44,52 @@ def livestock_webhook():
         "price": 250000,
         "qty": 10,
         "weight": "1kg",
-        "id": "livestock_123"
+        "id": "livestock_123",
+        "channel_id": 1234567890  # Target Discord channel
     }
     """
     try:
         data = request.json
         
         # Validasi
-        required = ["product", "price", "qty"]
+        required = ["product", "price", "qty", "channel_id"]
         if not all(k in data for k in required):
-            return {"error": "Missing fields"}, 400
+            return {"error": "Missing fields. Required: product, price, qty, channel_id"}, 400
         
         # Queue untuk dikirim ke Discord
-        orders[data.get("id", "unknown")] = data
+        order_id = data.get("id", f"order_{len(orders)}")
+        orders[order_id] = data
         
-        return {"status": "received", "id": data.get("id")}, 200
+        # Trigger send ke Discord (async)
+        import asyncio
+        asyncio.run_coroutine_threadsafe(
+            send_order_to_channel(data, order_id),
+            bot.loop
+        )
+        
+        return {"status": "received", "id": order_id}, 200
     
     except Exception as e:
         print(f"❌ Webhook error: {e}")
         return {"error": str(e)}, 500
 
 
-@bot.event
-async def on_ready_post_webhook():
-    """Kirim pending orders ke Discord (jika ada)"""
-    if not orders:
-        return
-    
-    channel = bot.get_channel(WEBHOOK_CHANNEL_ID)
-    if not channel:
-        print(f"❌ Channel {WEBHOOK_CHANNEL_ID} not found")
-        return
-    
-    for order_id, data in list(orders.items()):
+async def send_order_to_channel(data: dict, order_id: str):
+    """Kirim order langsung ke channel yang di-specify"""
+    try:
+        channel_id = data.get("channel_id")
+        channel = bot.get_channel(int(channel_id))
+        
+        if not channel:
+            print(f"❌ Channel {channel_id} not found")
+            return
+        
         await send_order_embed(channel, data, order_id)
-        del orders[order_id]
+        print(f"✅ Order sent to channel {channel_id}")
+    
+    except Exception as e:
+        print(f"❌ Send error: {e}")
+
 
 
 async def send_order_embed(channel, data, order_id):
