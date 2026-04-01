@@ -5,6 +5,11 @@ from flask import Flask, request
 import threading
 import json
 from typing import Optional
+import os
+from dotenv import load_dotenv
+
+# Load config dari .env
+load_dotenv()
 
 # Setup
 intents = discord.Intents.default()
@@ -14,10 +19,11 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # Flask for webhook
 app = Flask(__name__)
 
-# Config
-DISCORD_TOKEN = "YOUR_TOKEN_HERE"  # Ganti dengan token baru
-WEBHOOK_CHANNEL_ID = 12345678901234567  # Channel ID tempat order ditampilkan
-WEBHOOK_SECRET = "your_secret_key"  # Optional: secret untuk validasi webhook
+# Config dari environment
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
+WEBHOOK_HOST = os.getenv("WEBHOOK_HOST", "0.0.0.0")
+WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", "5000"))
 
 # Store pending orders
 orders = {}
@@ -196,14 +202,18 @@ def run_bot():
 
 
 def run_webhook():
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(host=WEBHOOK_HOST, port=WEBHOOK_PORT, debug=False)
 
 
 if __name__ == "__main__":
+    if not DISCORD_TOKEN:
+        print("❌ DISCORD_TOKEN not found in .env")
+        exit(1)
+    
     # Start bot thread
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
     
     # Start webhook server
-    print("🚀 Starting webhook server on port 5000...")
+    print(f"🚀 Starting webhook server on {WEBHOOK_HOST}:{WEBHOOK_PORT}...")
     run_webhook()
