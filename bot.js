@@ -143,7 +143,7 @@ bot.on('interactionCreate', async interaction => {
   if (!interaction.isButton()) return;
 
   if (interaction.customId.startsWith('order_')) {
-    const orderId = interaction.customId.replace('order_', '');
+    const orderId = interaction.customId.replace('order_', '').replace('livestock_', '');
     const modal = require('./utils/orderModal');
     await interaction.showModal(modal.create(orderId));
   }
