@@ -1,0 +1,6 @@
+node_modules/
+.env
+products.json
+orders.json
+.DS_Store
+*.log
