@@ -7,6 +7,7 @@ import json
 from typing import Optional
 import os
 from dotenv import load_dotenv
+from pathlib import Path
 
 # Load config dari .env
 load_dotenv()
@@ -25,8 +26,42 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 WEBHOOK_HOST = os.getenv("WEBHOOK_HOST", "0.0.0.0")
 WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", "5000"))
 
+# Data files
+PRODUCTS_FILE = "products.json"
+ORDERS_FILE = "orders.json"
+
 # Store pending orders
 orders = {}
+
+
+# ==================== File Utils ====================
+
+def load_products():
+    """Load products dari JSON"""
+    if Path(PRODUCTS_FILE).exists():
+        with open(PRODUCTS_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
+
+def save_products(products):
+    """Save products ke JSON"""
+    with open(PRODUCTS_FILE, 'w') as f:
+        json.dump(products, f, indent=2)
+
+
+def load_orders():
+    """Load orders dari JSON"""
+    if Path(ORDERS_FILE).exists():
+        with open(ORDERS_FILE, 'r') as f:
+            return json.load(f)
+    return []
+
+
+def save_orders(orders_list):
+    """Save orders ke JSON"""
+    with open(ORDERS_FILE, 'w') as f:
+        json.dump(orders_list, f, indent=2)
 
 
 @bot.event
@@ -37,6 +72,92 @@ async def on_ready():
         print(f"✅ Synced {len(synced)} command(s)")
     except Exception as e:
         print(f"❌ Sync error: {e}")
+
+
+# ==================== Commands ====================
+
+@bot.tree.command(name="addproduct", description="Add new product")
+@app_commands.describe(
+    name="Product name",
+    price="Product price",
+    stock="Initial stock quantity"
+)
+async def add_product(interaction: discord.Interaction, name: str, price: int, stock: int):
+    """Tambah produk baru"""
+    try:
+        products = load_products()
+        
+        # Check duplicate
+        if name.lower() in [p.lower() for p in products.keys()]:
+            await interaction.response.send_message(f"❌ Product '{name}' sudah ada!", ephemeral=True)
+            return
+        
+        # Add product
+        product_id = name.lower().replace(" ", "_")
+        products[product_id] = {
+            "name": name,
+            "price": price,
+            "stock": stock,
+            "created_at": str(discord.utils.utcnow())
+        }
+        
+        save_products(products)
+        
+        await interaction.response.send_message(
+            f"✅ Product added!\n"
+            f"**Name:** {name}\n"
+            f"**Price:** Rp {price:,}\n"
+            f"**Stock:** {stock} units",
+            ephemeral=True
+        )
+        print(f"✅ Product added: {name}")
+    
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
+
+
+@bot.tree.command(name="addstock", description="Add stock to existing product")
+@app_commands.describe(
+    product="Product name",
+    quantity="Quantity to add"
+)
+async def add_stock(interaction: discord.Interaction, product: str, quantity: int):
+    """Tambah stok produk"""
+    try:
+        products = load_products()
+        
+        # Find product (case-insensitive)
+        product_key = None
+        for key in products.keys():
+            if products[key]["name"].lower() == product.lower():
+                product_key = key
+                break
+        
+        if not product_key:
+            await interaction.response.send_message(f"❌ Product '{product}' not found!", ephemeral=True)
+            return
+        
+        # Add stock
+        old_stock = products[product_key]["stock"]
+        products[product_key]["stock"] += quantity
+        new_stock = products[product_key]["stock"]
+        
+        save_products(products)
+        
+        await interaction.response.send_message(
+            f"✅ Stock updated!\n"
+            f"**Product:** {products[product_key]['name']}\n"
+            f"**Old Stock:** {old_stock}\n"
+            f"**Added:** +{quantity}\n"
+            f"**New Stock:** {new_stock}",
+            ephemeral=True
+        )
+        print(f"✅ Stock updated: {products[product_key]['name']} (+{quantity})")
+    
+    except ValueError:
+        await interaction.response.send_message("❌ Quantity harus angka!", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
 
 
 # Webhook endpoint (Flask)
