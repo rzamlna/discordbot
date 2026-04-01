@@ -9,7 +9,7 @@ const PAKASIR_BASE_URL = 'https://api.pakasir.id/api/v1';
  * @param {number} amount - Jumlah pembayaran (Rp)
  * @param {string} description - Deskripsi pembayaran
  * @param {string} orderId - Order ID
- * @returns {Promise<{qris: string, invoice_id: string, amount: number}>}
+ * @returns {Promise<{success: boolean, qris: string, invoice_id: string, amount: number, reference_id: string, status: string} | {success: false, error: string}>}
  */
 async function createPayment(amount, description, orderId) {
   try {
@@ -33,10 +33,20 @@ async function createPayment(amount, description, orderId) {
 
     const data = response.data;
 
+    // Get QRIS as image URL or base64
+    let qrisImage = null;
+    if (data.data?.qr_image) {
+      qrisImage = data.data.qr_image; // URL atau base64
+    } else if (data.data?.qr_string) {
+      // Fallback: convert QR string to image URL via qr.io or similar
+      qrisImage = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(data.data.qr_string)}`;
+    }
+
     return {
       success: true,
       invoice_id: data.data?.invoice_id,
-      qris: data.data?.qr_string,
+      qris: qrisImage, // URL yang bisa langsung dipakai di Discord embed
+      qr_string: data.data?.qr_string,
       amount: amount,
       reference_id: payload.reference_id,
       status: data.data?.status

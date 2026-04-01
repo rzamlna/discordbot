@@ -107,8 +107,6 @@ app.post('/webhook/livestock', (req, res) => {
   }
 });
 
-// ==================== Order Functions ====================
-
 async function sendOrderEmbed(channel, data, orderId) {
   const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
@@ -135,6 +133,83 @@ async function sendOrderEmbed(channel, data, orderId) {
 
   await channel.send({ embeds: [embed], components: [row] });
   console.log(`✅ Order sent to channel ${data.channel_id}`);
+}
+
+// ==================== Order Functions ====================
+
+async function createTicketChannel(guild, ticketNumber, user, product, qty, totalPrice, notes, paymentResult) {
+  try {
+    const { EmbedBuilder, ChannelType, PermissionFlagsBits } = require('discord.js');
+
+    // Create private ticket channel
+    const ticketChannel = await guild.channels.create({
+      name: `ticket-${ticketNumber.toLowerCase().replace(/#/g, '').slice(-8)}`,
+      type: ChannelType.GuildText,
+      topic: `Order Ticket: ${ticketNumber}`,
+      permissionOverwrites: [
+        {
+          id: guild.id,
+          deny: [PermissionFlagsBits.ViewChannel]
+        },
+        {
+          id: user.id,
+          allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
+        }
+      ]
+    });
+
+    console.log(`✅ Ticket channel created: ${ticketChannel.name}`);
+
+    // Build order details embed
+    const orderEmbed = new EmbedBuilder()
+      .setTitle(`🎫 Ticket: ${ticketNumber}`)
+      .setColor(0x0099ff)
+      .addFields(
+        { name: '👤 Customer', value: user.username, inline: true },
+        { name: '📦 Product', value: product.name, inline: true },
+        { name: '📊 Quantity', value: `${qty} units`, inline: true },
+        { name: '💰 Unit Price', value: `Rp ${product.price.toLocaleString('id-ID')}`, inline: true },
+        { name: '🧮 Total Price', value: `Rp ${totalPrice.toLocaleString('id-ID')}`, inline: false },
+        { name: '📝 Notes', value: notes || 'None', inline: false }
+      )
+      .setTimestamp();
+
+    // Send order details
+    await ticketChannel.send({ embeds: [orderEmbed] });
+
+    // Build QRIS embed with image
+    const qrisEmbed = new EmbedBuilder()
+      .setTitle('💳 Payment QRIS')
+      .setColor(0x00aa00)
+      .addFields(
+        { name: '💰 Amount', value: `Rp ${totalPrice.toLocaleString('id-ID')}`, inline: true },
+        { name: '⏰ Status', value: 'PENDING', inline: true }
+      )
+      .setFooter({ text: 'Scan QRIS di bawah untuk melakukan pembayaran' });
+
+    // If QRIS available, add image
+    if (paymentResult.qris) {
+      qrisEmbed.setImage(paymentResult.qris);
+      console.log(`✅ QRIS image set: ${paymentResult.qris}`);
+    }
+
+    // Send QRIS embed
+    const qrisMessage = await ticketChannel.send({ embeds: [qrisEmbed] });
+
+    // Store message ID for payment verification
+    const orders = loadOrders();
+    const orderIndex = orders.findIndex(o => o.ticket_number === ticketNumber);
+    if (orderIndex !== -1) {
+      orders[orderIndex].discord_message_id = qrisMessage.id;
+      orders[orderIndex].discord_channel_id = ticketChannel.id;
+      saveOrders(orders);
+    }
+
+    return ticketChannel;
+  } catch (error) {
+    console.error(`❌ Ticket channel creation error: ${error}`);
+    return null;
+  }
 }
 
 // ==================== Button Interaction ====================
@@ -214,32 +289,32 @@ bot.on('interactionCreate', async interaction => {
 
       console.log(`✅ Order created:`, orderData);
 
-      // Build confirmation embed with QRIS
-      const { EmbedBuilder } = require('discord.js');
-      const embed = new EmbedBuilder()
-        .setTitle('🎟️ Order Confirmation')
-        .setColor(0x00aa00)
-        .addFields(
-          { name: '🎫 Ticket', value: ticketNumber, inline: true },
-          { name: '📦 Product', value: product.name, inline: true },
-          { name: '📊 Quantity', value: `${qty} units`, inline: true },
-          { name: '💰 Unit Price', value: `Rp ${product.price.toLocaleString('id-ID')}`, inline: true },
-          { name: '🧮 Total Price', value: `Rp ${totalPrice.toLocaleString('id-ID')}`, inline: true },
-          { name: '📝 Notes', value: notes || 'None', inline: false },
-          { name: '💳 QRIS', value: paymentResult.qris ? '[QRIS Generated]' : 'Error generating QRIS', inline: false }
-        )
-        .setFooter({ text: 'Scan QRIS untuk pembayaran' });
+      // Create private ticket channel
+      const guild = interaction.guild;
+      const ticketChannel = await createTicketChannel(guild, ticketNumber, interaction.user, product, qty, totalPrice, notes, paymentResult);
 
-      // Send embed
-      await interaction.reply({
-        embeds: [embed],
-        ephemeral: true
-      });
+      if (ticketChannel) {
+        // Build confirmation embed for user
+        const { EmbedBuilder } = require('discord.js');
+        const embed = new EmbedBuilder()
+          .setTitle('🎟️ Order Confirmation')
+          .setColor(0x00aa00)
+          .addFields(
+            { name: '🎫 Ticket', value: ticketNumber, inline: true },
+            { name: '📦 Product', value: product.name, inline: true },
+            { name: '📊 Quantity', value: `${qty} units`, inline: true },
+            { name: '💰 Unit Price', value: `Rp ${product.price.toLocaleString('id-ID')}`, inline: true },
+            { name: '🧮 Total Price', value: `Rp ${totalPrice.toLocaleString('id-ID')}`, inline: true },
+            { name: '📝 Notes', value: notes || 'None', inline: false }
+          )
+          .addFields({ name: '🎟️ Ticket Channel', value: `${ticketChannel}`, inline: false })
+          .setFooter({ text: 'Lihat detail pembayaran di ticket channel' });
 
-      // If QRIS image available, send separately
-      if (paymentResult.qris) {
-        // TODO: Send QRIS image or URL
-        console.log(`✅ QRIS: ${paymentResult.qris}`);
+        // Send embed to user
+        await interaction.reply({
+          embeds: [embed],
+          ephemeral: true
+        });
       }
 
     } catch (error) {
