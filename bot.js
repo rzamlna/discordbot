@@ -162,23 +162,89 @@ bot.on('interactionCreate', async interaction => {
         return await interaction.reply({ content: '❌ Qty harus > 0', ephemeral: true });
       }
 
+      // Get product data from products.json
+      const products = loadProducts();
+      const product = products[orderId];
+
+      if (!product) {
+        return await interaction.reply({ content: '❌ Product not found', ephemeral: true });
+      }
+
+      // Calculate total
+      const totalPrice = product.price * parseInt(qty);
+
+      // Generate ticket
+      const { generateTicketNumber, createPayment } = require('./utils/payment');
+      const ticketNumber = generateTicketNumber();
+
+      // Create payment via PaKasir
+      const paymentResult = await createPayment(
+        totalPrice,
+        `Order ${ticketNumber} - ${product.name}`,
+        ticketNumber
+      );
+
+      if (!paymentResult.success) {
+        return await interaction.reply({
+          content: `❌ Payment error: ${paymentResult.error}`,
+          ephemeral: true
+        });
+      }
+
+      // Save order
       const orderData = {
-        order_id: orderId,
+        ticket_number: ticketNumber,
+        product_id: orderId,
+        product_name: product.name,
         qty_ordered: parseInt(qty),
+        unit_price: product.price,
+        total_price: totalPrice,
         notes: notes,
         user: interaction.user.username,
+        user_id: interaction.user.id,
+        payment_invoice_id: paymentResult.invoice_id,
+        payment_status: 'PENDING',
         timestamp: new Date().toISOString()
       };
 
-      console.log(`✅ Order received:`, orderData);
+      // Save to orders.json
+      const orders = loadOrders();
+      orders.push(orderData);
+      saveOrders(orders);
 
+      console.log(`✅ Order created:`, orderData);
+
+      // Build confirmation embed with QRIS
+      const { EmbedBuilder } = require('discord.js');
+      const embed = new EmbedBuilder()
+        .setTitle('🎟️ Order Confirmation')
+        .setColor(0x00aa00)
+        .addFields(
+          { name: '🎫 Ticket', value: ticketNumber, inline: true },
+          { name: '📦 Product', value: product.name, inline: true },
+          { name: '📊 Quantity', value: `${qty} units`, inline: true },
+          { name: '💰 Unit Price', value: `Rp ${product.price.toLocaleString('id-ID')}`, inline: true },
+          { name: '🧮 Total Price', value: `Rp ${totalPrice.toLocaleString('id-ID')}`, inline: true },
+          { name: '📝 Notes', value: notes || 'None', inline: false },
+          { name: '💳 QRIS', value: paymentResult.qris ? '[QRIS Generated]' : 'Error generating QRIS', inline: false }
+        )
+        .setFooter({ text: 'Scan QRIS untuk pembayaran' });
+
+      // Send embed
       await interaction.reply({
-        content: `✅ Order confirmed!\n**Qty:** ${qty} units\n**Notes:** ${notes || 'None'}`,
+        embeds: [embed],
         ephemeral: true
       });
+
+      // If QRIS image available, send separately
+      if (paymentResult.qris) {
+        // TODO: Send QRIS image or URL
+        console.log(`✅ QRIS: ${paymentResult.qris}`);
+      }
+
     } catch (error) {
       console.error(`❌ Modal error: ${error}`);
-      await interaction.reply({ content: '❌ Error processing order', ephemeral: true });
+      await interaction.reply({ content: `❌ Error: ${error.message}`, ephemeral: true });
     }
   }
 });
